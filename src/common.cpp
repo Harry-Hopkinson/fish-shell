@@ -710,20 +710,18 @@ wcstring reformat_for_screen(const wcstring &msg, const termsize_t &termsize) {
                 pos = pos + 1;
             } else if (overflow) {
                 // In case of overflow, we print a newline, except if we already are at position 0.
-                wchar_t *token = wcsndup(start, pos - start);
+                wcstring token = msg.substr(start - msg.c_str(), pos - start);
                 if (line_width != 0) buff.push_back(L'\n');
-                buff.append(format_string(L"%ls-\n", token));
-                free(token);
+                buff.append(format_string(L"%ls-\n", token.c_str()));
                 line_width = 0;
             } else {
                 // Print the token.
-                wchar_t *token = wcsndup(start, pos - start);
+                wcstring token = msg.substr(start - msg.c_str(), pos - start);
                 if ((line_width + (line_width != 0 ? 1 : 0) + tok_width) > screen_width) {
                     buff.push_back(L'\n');
                     line_width = 0;
                 }
-                buff.append(format_string(L"%ls%ls", line_width ? L" " : L"", token));
-                free(token);
+                buff.append(format_string(L"%ls%ls", line_width ? L" " : L"", token.c_str()));
                 line_width += (line_width != 0 ? 1 : 0) + tok_width;
             }
 
@@ -1044,8 +1042,7 @@ static void escape_string_script(const wchar_t *orig_in, size_t in_len, wcstring
 }
 
 /// Escapes a string for use in a regex string. Not safe for use with `eval` as only
-/// characters reserved by PCRE2 are escaped, i.e. it relies on fish's automatic escaping
-/// of subshell output in subsequent concatenation or for use as an argument.
+/// characters reserved by PCRE2 are escaped.
 /// \param in is the raw string to be searched for literally when substituted in a PCRE2 expression.
 static wcstring escape_string_pcre2(const wcstring &in) {
     wcstring out;
@@ -1622,11 +1619,6 @@ bool unescape_string(const wchar_t *input, wcstring *output, unescape_flags_t es
 bool unescape_string(const wcstring &input, wcstring *output, unescape_flags_t escape_special,
                      escape_string_style_t style) {
     return unescape_string(input.c_str(), input.size(), output, escape_special, style);
-}
-
-[[gnu::noinline]] void bugreport() {
-    FLOG(error, _(L"This is a bug. Break on 'bugreport' to debug."));
-    FLOG(error, _(L"If you can reproduce it, please report: "), PACKAGE_BUGREPORT, L'.');
 }
 
 wcstring format_size(long long sz) {

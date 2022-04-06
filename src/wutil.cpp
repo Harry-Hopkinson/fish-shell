@@ -18,9 +18,11 @@
 #include <unistd.h>
 #include <wctype.h>
 
+#include <algorithm>
 #include <atomic>
 #include <cstring>
 #include <cwchar>
+#include <iterator>
 #include <string>
 #include <unordered_map>
 
@@ -690,11 +692,10 @@ unsigned long long fish_wcstoull(const wchar_t *str, const wchar_t **endptr, int
 
 /// Like wcstod(), but wcstod() is enormously expensive on some platforms so this tries to have a
 /// fast path.
-double fish_wcstod(const wchar_t *str, wchar_t **endptr) {
+double fish_wcstod(const wchar_t *str, wchar_t **endptr, size_t len) {
     // We can ignore the locale because we use LC_NUMERIC=C!
     // The "fast path." If we're all ASCII and we fit inline, use strtod().
     char narrow[128];
-    size_t len = std::wcslen(str);
     size_t len_plus_0 = 1 + len;
     auto is_ascii = [](wchar_t c) { return 0 <= c && c <= 127; };
     if (len_plus_0 <= sizeof narrow && std::all_of(str, str + len, is_ascii)) {
@@ -709,6 +710,70 @@ double fish_wcstod(const wchar_t *str, wchar_t **endptr) {
         return ret;
     }
     return std::wcstod(str, endptr);
+}
+
+double fish_wcstod(const wchar_t *str, wchar_t **endptr) {
+    return fish_wcstod(str, endptr, std::wcslen(str));
+}
+double fish_wcstod(const wcstring &str, wchar_t **endptr) {
+    return fish_wcstod(str.c_str(), endptr, str.size());
+}
+
+/// Like wcstod(), but allows underscore separators. Leading, trailing, and multiple underscores are
+/// allowed, as are underscores next to decimal (.), exponent (E/e/P/p), and hexadecimal (X/x)
+/// delimiters. This consumes trailing underscores -- endptr will point past the last underscore
+/// which is legal to include in a parse (according to the above rules). Free-floating leading
+/// underscores ("_ 3") are not allowed and will result in a no-parse. Underscores are not allowed
+/// before or inside of "infinity" or "nan" input. Trailing underscores after "infinity" or "nan"
+/// are not consumed.
+double fish_wcstod_underscores(const wchar_t *str, wchar_t **endptr) {
+    const wchar_t *orig = str;
+    while (iswspace(*str)) str++; // Skip leading whitespace.
+    size_t leading_whitespace = size_t(str - orig);
+    auto is_sign = [](wchar_t c) { return c == L'+' || c == L'-'; };
+    auto is_inf_or_nan_char = [](wchar_t c) {
+        return c == L'i' || c == L'I' || c == L'n' || c == L'N';
+    };
+    // We don't do any underscore-stripping for infinity/NaN.
+    if (is_inf_or_nan_char(*str) || (is_sign(*str) && is_inf_or_nan_char(*(str + 1)))) {
+        return fish_wcstod(orig, endptr);
+    }
+    // We build a string to pass to the system wcstod, pruned of underscores. We will take all
+    // leading alphanumeric characters that can appear in a strtod numeric literal, dots (.), and
+    // signs (+/-). In order to be more clever, for example to stop earlier in the case of strings
+    // like "123xxxxx", we would need to do a full parse, because sometimes 'a' is a hex digit and
+    // sometimes it is the end of the parse, sometimes a dot '.' is a decimal delimiter and
+    // sometimes it is the end of the valid parse, as in "1_2.3_4.5_6", etc.
+    wcstring pruned;
+    // We keep track of the positions *in the pruned string* where there used to be underscores. We
+    // will pass the pruned version of the input string to the system wcstod, which in turn will
+    // tell us how many characters it consumed. Then we will set our own endptr based on (1) the
+    // number of characters consumed from the pruned string, and (2) how many underscores came
+    // before the last consumed character. The alternative to doing it this way (for example, "only
+    // deleting the correct underscores") would require actually parsing the input string, so that
+    // we can know when to stop grabbing characters and dropping underscores, as in "1_2.3_4.5_6".
+    std::vector<size_t> underscores;
+    // If we wanted to future-proof against a strtod from the future that, say, allows octal
+    // literals using 0o, etc., we could just use iswalnum, instead of iswxdigit and P/p/X/x checks.
+    while (iswxdigit(*str) || *str == L'P' || *str == L'p' || *str == L'X' || *str == L'x' ||
+           is_sign(*str) || *str == L'.' || *str == L'_') {
+        if (*str == L'_') underscores.push_back(pruned.length());
+        else pruned.push_back(*str);
+        str++;
+    }
+    const wchar_t *pruned_begin = pruned.c_str();
+    const wchar_t *pruned_end = nullptr;
+    double result = fish_wcstod(pruned_begin, (wchar_t **)(&pruned_end));
+    if (pruned_end == pruned_begin) {
+        if (endptr) *endptr = (wchar_t *)orig;
+        return result;
+    }
+    auto consumed_underscores_end = std::upper_bound(underscores.begin(), underscores.end(),
+                                                     size_t(pruned_end - pruned_begin));
+    size_t num_underscores_consumed = std::distance(underscores.begin(), consumed_underscores_end);
+    if (endptr) *endptr = (wchar_t *)(orig + leading_whitespace + (pruned_end - pruned_begin)
+                                    + num_underscores_consumed);
+    return result;
 }
 
 file_id_t file_id_t::from_stat(const struct stat &buf) {

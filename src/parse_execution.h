@@ -12,7 +12,6 @@
 #include "proc.h"
 
 class block_t;
-class cancellation_group_t;
 class operation_context_t;
 class parser_t;
 
@@ -38,7 +37,10 @@ class parse_execution_context_t : noncopyable_t {
     parsed_source_ref_t pstree;
     parser_t *const parser;
     const operation_context_t &ctx;
-    const std::shared_ptr<cancellation_group_t> cancel_group;
+
+    // If set, one of our processes received a cancellation signal (INT or QUIT) so we are
+    // unwinding.
+    int cancel_signal{0};
 
     // The currently executing job node, used to indicate the line number.
     const ast::job_t *executing_job_node{};
@@ -141,16 +143,20 @@ class parse_execution_context_t : noncopyable_t {
     end_execution_reason_t populate_job_from_job_node(job_t *j, const ast::job_t &job_node,
                                                       const block_t *associated_block);
 
+    // Assign a job group to the given job.
+    void setup_group(job_t *j);
+
+    // \return whether we should apply job control to our processes.
+    bool use_job_control() const;
+
     // Returns the line number of the node. Not const since it touches cached_lineno_offset.
     int line_offset_of_node(const ast::job_t *node);
     int line_offset_of_character_at_offset(size_t offset);
 
    public:
     /// Construct a context in preparation for evaluating a node in a tree, with the given block_io.
-    /// The cancel group is never null and should be provided when resolving job groups.
     /// The execution context may access the parser and parent job group (if any) through ctx.
     parse_execution_context_t(parsed_source_ref_t pstree, const operation_context_t &ctx,
-                              std::shared_ptr<cancellation_group_t> cancel_group,
                               io_chain_t block_io);
 
     /// Returns the current line number, indexed from 1. Not const since it touches

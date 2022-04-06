@@ -1416,10 +1416,11 @@ void reader_init() {
     termsize_container_t::shared().updating(parser);
 }
 
-/// Restore the term mode if we own the terminal. It's important we do this before
-/// restore_foreground_process_group, otherwise we won't think we own the terminal.
+/// Restore the term mode if we own the terminal and are interactive (#8705).
+/// It's important we do this before restore_foreground_process_group,
+/// otherwise we won't think we own the terminal.
 void restore_term_mode() {
-    if (getpgrp() != tcgetpgrp(STDIN_FILENO)) return;
+    if (!is_interactive_session() || getpgrp() != tcgetpgrp(STDIN_FILENO)) return;
 
     if (tcsetattr(STDIN_FILENO, TCSANOW, &terminal_mode_on_startup) == -1 && errno == EIO) {
         redirect_tty_output();
@@ -1614,8 +1615,7 @@ wcstring completion_apply_to_command_line(const wcstring &val, complete_flags_t 
         const wchar_t *begin, *end;
 
         const wchar_t *buff = command_line.c_str();
-        parse_util_token_extent(buff, cursor_pos, &begin, nullptr, nullptr, nullptr);
-        end = buff + cursor_pos;
+        parse_util_token_extent(buff, cursor_pos, &begin, &end, nullptr, nullptr);
 
         wcstring sb(buff, begin - buff);
 
@@ -1941,17 +1941,12 @@ const wchar_t *REPLACE_UNCLEAN = L"$*?({})";
 /// other than if the new token is already an exact replacement, e.g. if the COMPLETE_DONT_ESCAPE
 /// flag is set.
 static bool reader_can_replace(const wcstring &in, int flags) {
-    const wchar_t *str = in.c_str();
-
     if (flags & COMPLETE_DONT_ESCAPE) {
         return true;
     }
 
     // Test characters that have a special meaning in any character position.
-    while (*str) {
-        if (std::wcschr(REPLACE_UNCLEAN, *str)) return false;
-        str++;
-    }
+    if (in.find_first_of(REPLACE_UNCLEAN) != wcstring::npos) return false;
 
     return true;
 }
@@ -1986,7 +1981,7 @@ bool reader_data_t::handle_completions(const completion_list_t &comp, size_t tok
     bool success = false;
     const editable_line_t *el = &command_line;
 
-    const wcstring tok(el->text().c_str() + token_begin, token_end - token_begin);
+    const wcstring tok(el->text(), token_begin, token_end - token_begin);
 
     // Check trivial cases.
     size_t size = comp.size();
@@ -2799,6 +2794,7 @@ static int read_i(parser_t &parser) {
     conf.syntax_check_ok = true;
     conf.autosuggest_ok = check_autosuggestion_enabled(parser.vars());
     conf.expand_abbrev_ok = true;
+    conf.event = L"fish_prompt";
 
     if (parser.is_breakpoint() && function_exists(DEBUG_PROMPT_FUNCTION_NAME, parser)) {
         conf.left_prompt_cmd = DEBUG_PROMPT_FUNCTION_NAME;
@@ -3543,7 +3539,7 @@ void reader_data_t::handle_readline_command(readline_cmd_t c, readline_loop_stat
             }
 
             auto move_style =
-                (c == rl::backward_word) ? move_word_style_punctuation : move_word_style_whitespace;
+                (c != rl::backward_bigword) ? move_word_style_punctuation : move_word_style_whitespace;
             move_word(active_edit_line(), MOVE_DIR_LEFT, false /* do not erase */, move_style,
                       false);
             break;
@@ -3561,7 +3557,7 @@ void reader_data_t::handle_readline_command(readline_cmd_t c, readline_loop_stat
             }
 
             auto move_style =
-                (c == rl::forward_word) ? move_word_style_punctuation : move_word_style_whitespace;
+                (c != rl::forward_bigword) ? move_word_style_punctuation : move_word_style_whitespace;
             editable_line_t *el = active_edit_line();
             if (el->position() < el->size()) {
                 move_word(el, MOVE_DIR_RIGHT, false /* do not erase */, move_style, false);
@@ -4009,7 +4005,9 @@ maybe_t<wcstring> reader_data_t::readline(int nchars_or_0) {
     }
     first_prompt = false;
 
-    event_fire_generic(parser(), L"fish_prompt");
+    if (!conf.event.empty()) {
+        event_fire_generic(parser(), conf.event);
+    }
     exec_prompt();
 
     /// A helper that kicks off syntax highlighting, autosuggestion computing, and repaints.

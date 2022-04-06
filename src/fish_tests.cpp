@@ -1389,12 +1389,12 @@ struct segment_t {
     /* implicit */ segment_t(const char *text) : text(text) {}
 };
 
-using test_t = std::vector<segment_t>;
-using test_list_t = std::vector<test_t>;
+using indent_test_t = std::vector<segment_t>;
+using indent_test_list_t = std::vector<indent_test_t>;
 
 // Add a new test to a test list based on a series of ints and texts.
 template <typename... Types>
-void add_test(test_list_t *v, const Types &...types) {
+void add_test(indent_test_list_t *v, const Types &...types) {
     segment_t segments[] = {types...};
     v->emplace_back(std::begin(segments), std::end(segments));
 }
@@ -1404,7 +1404,7 @@ static void test_indents() {
     say(L"Testing indents");
     using namespace indent_tests;
 
-    test_list_t tests;
+    indent_test_list_t tests;
     add_test(&tests,              //
              0, "if", 1, " foo",  //
              0, "\nend");
@@ -1544,7 +1544,7 @@ static void test_indents() {
     );
 
     int test_idx = 0;
-    for (const test_t &test : tests) {
+    for (const indent_test_t &test : tests) {
         // Construct the input text and expected indents.
         wcstring text;
         std::vector<int> expected_indents;
@@ -3000,6 +3000,49 @@ static void test_wcstod() {
     tod_test(L"nope", "nope");
 }
 
+static void test_fish_wcstod_underscores() {
+    say(L"Testing fish_wcstod_underscores");
+
+    auto test_case = [](const wchar_t *s, size_t expected_num_consumed) {
+        wchar_t *endptr = nullptr;
+        fish_wcstod_underscores(s, &endptr);
+        size_t num_consumed = (size_t)(endptr - (wchar_t *)s);
+        do_test(expected_num_consumed == num_consumed);
+    };
+
+    test_case(L"123", 3);
+    test_case(L"1_2.3_4.5_6", 7);
+    test_case(L"1_2", 3);
+    test_case(L"1_._2", 5);
+    test_case(L"1__2", 4);
+    test_case(L" 1__2 3__4 ", 5);
+    test_case(L"1_2 3_4", 3);
+    test_case(L" 1", 2);
+    test_case(L" 1_", 3);
+    test_case(L" 1__", 4);
+    test_case(L" 1___", 5);
+    test_case(L" 1___ 2___", 5);
+    test_case(L" _1", 3);
+    test_case(L"1 ", 1);
+    test_case(L"infinity_", 8);
+    test_case(L" -INFINITY", 10);
+    test_case(L"_infinity", 0);
+    test_case(L"nan(0)", 6);
+    test_case(L"nan(0)_", 6);
+    test_case(L"_nan(0)", 0);
+    // We don't strip the underscores in this commented-out test case, and the behavior is
+    // implementation-defined, so we don't actually know how many characters will get consumed. On
+    // macOS the strtod man page only says what happens with an alphanumeric string passed to nan(),
+    // but the strtod consumes all of the characters even if there are underscores.
+    // test_case(L"nan(0_1_2)", 3);
+    test_case(L" _ 1", 0);
+    test_case(L"0x_dead_beef", 12);
+    test_case(L"None", 0);
+    test_case(L" None", 0);
+    test_case(L"Also none", 0);
+    test_case(L" Also none", 0);
+}
+
 static void test_dup2s() {
     using std::make_shared;
     io_chain_t chain;
@@ -3283,6 +3326,13 @@ static void test_complete() {
     wcstring newcmdline = completion_apply_to_command_line(
         completions.front().completion, completions.front().flags, cmdline, &where, false);
     do_test(newcmdline == L"touch test/complete_test/bracket\\[abc\\] ");
+
+    // #8820
+    size_t cursor_pos = 11;
+    newcmdline =
+        completion_apply_to_command_line(L"Debug/", COMPLETE_REPLACES_TOKEN | COMPLETE_NO_SPACE,
+                                         L"mv debug debug", &cursor_pos, true);
+    do_test(newcmdline == L"mv debug Debug/");
 
 #ifndef __CYGWIN__  // Square brackets are not legal path characters on WIN32/CYGWIN
     cmdline = LR"(touch test/complete_test/gnarlybracket\\[)";
@@ -6801,6 +6851,7 @@ static const test_t s_tests[]{
     {TEST_GROUP("abbreviations"), test_abbreviations},
     {TEST_GROUP("builtins/test"), test_test},
     {TEST_GROUP("wcstod"), test_wcstod},
+    {TEST_GROUP("fish_wcstod_underscores"), test_fish_wcstod_underscores},
     {TEST_GROUP("dup2s"), test_dup2s},
     {TEST_GROUP("dup2s"), test_dup2s_fd_for_target_fd},
     {TEST_GROUP("path"), test_path},

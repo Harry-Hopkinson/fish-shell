@@ -60,7 +60,7 @@ static void replace_part(const wchar_t *begin, const wchar_t *end, const wchar_t
     switch (append_mode) {
         case REPLACE_MODE: {
             out.append(insert);
-            out_pos = std::wcslen(insert) + (begin - buff);
+            out_pos = out.size();
             break;
         }
         case APPEND_MODE: {
@@ -170,7 +170,7 @@ maybe_t<int> builtin_commandline(parser_t &parser, io_streams_t &streams, const 
                                                   {L"paging-mode", no_argument, nullptr, 'P'},
                                                   {L"paging-full-mode", no_argument, nullptr, 'F'},
                                                   {L"is-valid", no_argument, nullptr, 1},
-                                                  {nullptr, 0, nullptr, 0}};
+                                                  {}};
 
     int opt;
     wgetopter_t w;

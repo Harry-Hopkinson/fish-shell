@@ -152,6 +152,9 @@ struct library_data_t {
     /// Number of recursive calls to the internal completion function.
     uint32_t complete_recursion_level{0};
 
+    /// If set, we are currently within fish's initialization routines.
+    bool within_fish_init{false};
+
     /// If we're currently repainting the commandline.
     /// Useful to stop infinite loops.
     bool is_repaint{false};
@@ -397,9 +400,6 @@ class parser_t : public std::enable_shared_from_this<parser_t> {
 
     /// Return the job with the specified job id. If id is 0 or less, return the last job used.
     const job_t *job_with_id(job_id_t job_id) const;
-
-    /// Return the job with the specified internal job id.
-    const job_t *job_with_internal_id(internal_job_id_t job_id) const;
 
     /// Returns the job with the given pid.
     job_t *job_get_from_pid(pid_t pid) const;

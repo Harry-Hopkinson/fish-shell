@@ -149,27 +149,27 @@ function fish_config --description "Launch fish's web based configuration"
                     string replace -r '.*/([^/]*).theme$' '$1' $dir/*.theme
                     return
                 case demo
-                    echo -ns (set_color $fish_color_command) /bright/vixens
+                    echo -ns (set_color $fish_color_command || set_color $fish_color_normal) /bright/vixens
                     echo -ns (set_color normal) ' '
-                    echo -ns (set_color $fish_color_param) jump
+                    echo -ns (set_color $fish_color_param || set_color $fish_color_normal) jump
                     echo -ns (set_color normal) ' '
-                    echo -ns (set_color $fish_color_redirection) '|'
+                    echo -ns (set_color $fish_color_redirection || set_color $fish_color_normal) '|'
                     echo -ns (set_color normal) ' '
-                    echo -ns (set_color $fish_color_quote) '"fowl"'
+                    echo -ns (set_color $fish_color_quote || set_color $fish_color_normal) '"fowl"'
                     echo -ns (set_color normal) ' '
-                    echo -ns (set_color $fish_color_redirection) '> quack'
+                    echo -ns (set_color $fish_color_redirection || set_color $fish_color_normal) '> quack'
                     echo -ns (set_color normal) ' '
-                    echo -ns (set_color $fish_color_end) '&'
+                    echo -ns (set_color $fish_color_end || set_color $fish_color_normal) '&'
                     set_color normal
-                    echo -s (set_color $fish_color_comment) ' # This is a comment'
+                    echo -s (set_color $fish_color_comment || set_color $fish_color_normal) ' # This is a comment'
                     set_color normal
-                    echo -ns (set_color $fish_color_command) echo
+                    echo -ns (set_color $fish_color_command || set_color $fish_color_normal) echo
                     echo -ns (set_color normal) ' '
-                    echo -s (set_color $fish_color_error) "'" (set_color $fish_color_quote) "Errors are the portal to discovery"
+                    echo -s (set_color $fish_color_error || set_color $fish_color_normal) "'" (set_color $fish_color_quote || set_color $fish_color_normal) "Errors are the portal to discovery"
                     set_color normal
-                    echo -ns (set_color $fish_color_command) Th
+                    echo -ns (set_color $fish_color_command || set_color $fish_color_normal) Th
                     set_color normal
-                    set_color $fish_color_autosuggestion
+                    set_color $fish_color_autosuggestion || set_color $fish_color_normal
                     echo is is an autosuggestion
                     echo
                 case show
@@ -236,7 +236,15 @@ function fish_config --description "Launch fish's web based configuration"
                         return 1
                     end
 
-                    set -l have_color 0
+                    set -l known_colors fish_color_{normal,command,keyword,quote,redirection,\
+                        end,error,param,option,comment,selection,operator,escape,autosuggestion,\
+                        cwd,user,host,host_remote,cancel,search_match} \
+                        fish_pager_color_{progress,background,prefix,completion,description,\
+                        selected_background,selected_prefix,selected_completion,selected_description,\
+                        secondary_background,secondary_prefix,secondary_completion,secondary_description}
+
+
+                    set -l have_colors
                     while read -lat toks
                         # We only allow color variables.
                         # Not the specific list, but something named *like* a color variable.
@@ -251,11 +259,19 @@ function fish_config --description "Launch fish's web based configuration"
                             set -eg $toks[1]
                         end
                         set $scope $toks
-                        set have_color 1
+                        set -a have_colors $toks[1]
                     end <$file
 
+                    # Set all colors that aren't mentioned to empty
+                    for c in $known_colors
+                        contains -- $c $have_colors
+                        and continue
+
+                        set $scope $c
+                    end
+
                     # Return true if we changed at least one color
-                    test $have_color -eq 1
+                    set -q have_colors[1]
                     return
                 case dump
                     # Write the current theme in .theme format, to stdout.

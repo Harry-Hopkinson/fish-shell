@@ -233,9 +233,10 @@ static void source_config_in_directory(parser_t &parser, const wcstring &dir) {
     FLOGF(config, L"sourcing %ls", escaped_pathname.c_str());
 
     const wcstring cmd = L"builtin source " + escaped_pathname;
-    set_is_within_fish_initialization(true);
+
+    parser.libdata().within_fish_init = true;
     parser.eval(cmd, io_chain_t());
-    set_is_within_fish_initialization(false);
+    parser.libdata().within_fish_init = false;
 }
 
 /// Parse init files. exec_path is the path of fish executable as determined by argv[0].
@@ -302,7 +303,7 @@ static int fish_parse_opt(int argc, char **argv, fish_cmd_opts_t *opts) {
         {"private", no_argument, nullptr, 'P'},
         {"help", no_argument, nullptr, 'h'},
         {"version", no_argument, nullptr, 'v'},
-        {nullptr, 0, nullptr, 0}};
+        {}};
 
     int opt;
     while ((opt = getopt_long(argc, argv, short_opts, long_opts, nullptr)) != -1) {
@@ -426,6 +427,7 @@ int main(int argc, char **argv) {
     set_main_thread();
     setup_fork_guards();
     signal_unblock_all();
+
     setlocale(LC_ALL, "");
 
     // struct stat tmp;
@@ -512,6 +514,16 @@ int main(int argc, char **argv) {
     if (!opts.no_exec && !opts.no_config) {
         read_init(parser, paths);
     }
+
+    if (opts.is_interactive_session && opts.no_config && !opts.no_exec) {
+        // If we have no config, we default to the default key bindings.
+        parser.vars().set_one(L"fish_key_bindings", ENV_UNEXPORT, L"fish_default_key_bindings");
+        if (function_exists(L"fish_default_key_bindings", parser)) {
+            std::vector<std::string> cmd{"fish_default_key_bindings"};
+            run_command_list(parser, &cmd, {});
+        }
+    }
+
     // Re-read the terminal modes after config, it might have changed them.
     term_copy_modes();
 

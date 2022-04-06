@@ -2,7 +2,7 @@
 #include "config.h"  // IWYU pragma: keep
 
 #include "ulimit.h"
-    
+
 #include <sys/resource.h>
 
 #include <cerrno>
@@ -26,9 +26,18 @@ struct resource_t {
 
 /// Array of resource_t structs, describing all known resource types.
 static const struct resource_t resource_arr[] = {
+#ifdef RLIMIT_SBSIZE
+    {RLIMIT_SBSIZE, L"Maximum size of socket buffers", L'b', 1024},
+#endif
     {RLIMIT_CORE, L"Maximum size of core files created", L'c', 1024},
     {RLIMIT_DATA, L"Maximum size of a process’s data segment", L'd', 1024},
+#ifdef RLIMIT_NICE
+    {RLIMIT_NICE, L"Control of maximum nice priority", L'e', 1},
+#endif
     {RLIMIT_FSIZE, L"Maximum size of files created by the shell", L'f', 1024},
+#ifdef RLIMIT_SIGPENDING
+    {RLIMIT_SIGPENDING, L"Maximum number of pending signals", L'i', 1},
+#endif
 #ifdef RLIMIT_MEMLOCK
     {RLIMIT_MEMLOCK, L"Maximum size that may be locked into memory", L'l', 1024},
 #endif
@@ -36,15 +45,40 @@ static const struct resource_t resource_arr[] = {
     {RLIMIT_RSS, L"Maximum resident set size", L'm', 1024},
 #endif
     {RLIMIT_NOFILE, L"Maximum number of open file descriptors", L'n', 1},
+#ifdef RLIMIT_MSGQUEUE
+    {RLIMIT_MSGQUEUE, L"Maximum bytes in POSIX message queues", L'q', 1024},
+#endif
+#ifdef RLIMIT_RTPRIO
+    {RLIMIT_RTPRIO, L"Maximum realtime scheduling priority", L'r', 1},
+#endif
     {RLIMIT_STACK, L"Maximum stack size", L's', 1024},
-    {RLIMIT_CPU, L"Maximum amount of cpu time in seconds", L't', 1},
+    {RLIMIT_CPU, L"Maximum amount of CPU time in seconds", L't', 1},
 #ifdef RLIMIT_NPROC
-    {RLIMIT_NPROC, L"Maximum number of processes available to a single user", L'u', 1},
+    {RLIMIT_NPROC, L"Maximum number of processes available to current user", L'u', 1},
 #endif
 #ifdef RLIMIT_AS
-    {RLIMIT_AS, L"Maximum amount of virtual memory available to the shell", L'v', 1024},
+    {RLIMIT_AS, L"Maximum amount of virtual memory available to each process", L'v', 1024},
+#endif
+#ifdef RLIMIT_SWAP
+    {RLIMIT_SWAP, L"Maximum swap space", L'w', 1024},
+#endif
+#ifdef RLIMIT_RTTIME
+    {RLIMIT_RTTIME, L"Maximum contiguous realtime CPU time", L'y', 1},
+#endif
+#ifdef RLIMIT_KQUEUES
+    {RLIMIT_KQUEUES, L"Maximum number of kqueues", L'K', 1},
+#endif
+#ifdef RLIMIT_NPTS
+    {RLIMIT_NPTS, L"Maximum number of pseudo-terminals", L'P', 1},
+#endif
+#ifdef RLIMIT_NTHR
+    {RLIMIT_NTHR, L"Maximum number of simultaneous threads", L'T', 1},
 #endif
     {0, nullptr, 0, 0}};
+
+/// This is likely to be the same as RLIMIT_INFINITY, but it shouldn't get used
+/// in the same context (that is, compared to the result of a getrlimit call).
+#define RLIMIT_UNKNOWN -1
 
 /// Get the implicit multiplication factor for the specified resource limit.
 static int get_multiplier(int what) {
@@ -158,23 +192,33 @@ maybe_t<int> builtin_ulimit(parser_t &parser, io_streams_t &streams, const wchar
     bool soft = false;
     int what = RLIMIT_FSIZE;
 
-    static const wchar_t *const short_options = L":HSacdflmnstuvh";
+    static const wchar_t *const short_options = L":HSabcdefilmnqrstuvwyKPTh";
     static const struct woption long_options[] = {
         {L"all", no_argument, nullptr, 'a'},
         {L"hard", no_argument, nullptr, 'H'},
         {L"soft", no_argument, nullptr, 'S'},
+        {L"socket-buffers", no_argument, nullptr, 'b'},
         {L"core-size", no_argument, nullptr, 'c'},
         {L"data-size", no_argument, nullptr, 'd'},
+        {L"nice", no_argument, nullptr, 'e'},
         {L"file-size", no_argument, nullptr, 'f'},
+        {L"pending-signals", no_argument, nullptr, 'i'},
         {L"lock-size", no_argument, nullptr, 'l'},
         {L"resident-set-size", no_argument, nullptr, 'm'},
         {L"file-descriptor-count", no_argument, nullptr, 'n'},
+        {L"queue-size", no_argument, nullptr, 'q'},
+        {L"realtime-priority", no_argument, nullptr, 'r'},
         {L"stack-size", no_argument, nullptr, 's'},
         {L"cpu-time", no_argument, nullptr, 't'},
         {L"process-count", no_argument, nullptr, 'u'},
         {L"virtual-memory-size", no_argument, nullptr, 'v'},
+        {L"swap-size", no_argument, nullptr, 'w'},
+        {L"realtime-maxtime", no_argument, nullptr, 'y'},
+        {L"kernel-queues", no_argument, nullptr, 'K'},
+        {L"ptys", no_argument, nullptr, 'P'},
+        {L"threads", no_argument, nullptr, 'T'},
         {L"help", no_argument, nullptr, 'h'},
-        {nullptr, 0, nullptr, 0}};
+        {}};
 
     int opt;
     wgetopter_t w;
@@ -192,6 +236,14 @@ maybe_t<int> builtin_ulimit(parser_t &parser, io_streams_t &streams, const wchar
                 soft = true;
                 break;
             }
+            case 'b': {
+#ifdef RLIMIT_SBSIZE
+                what = RLIMIT_SBSIZE;
+#else
+                what = RLIMIT_UNKNOWN;
+#endif
+                break;
+            }
             case 'c': {
                 what = RLIMIT_CORE;
                 break;
@@ -200,24 +252,60 @@ maybe_t<int> builtin_ulimit(parser_t &parser, io_streams_t &streams, const wchar
                 what = RLIMIT_DATA;
                 break;
             }
+            case 'e': {
+#ifdef RLIMIT_NICE
+                what = RLIMIT_NICE;
+#else
+                what = RLIMIT_UNKNOWN;
+#endif
+                break;
+            }
             case 'f': {
                 what = RLIMIT_FSIZE;
                 break;
             }
-#ifdef RLIMIT_MEMLOCK
+            case 'i': {
+#ifdef RLIMIT_SIGPENDING
+                what = RLIMIT_SIGPENDING;
+#else
+                what = RLIMIT_UNKNOWN;
+#endif
+                break;
+            }
             case 'l': {
+#ifdef RLIMIT_MEMLOCK
                 what = RLIMIT_MEMLOCK;
+#else
+                what = RLIMIT_UNKNOWN;
+#endif
                 break;
             }
-#endif
-#ifdef RLIMIT_RSS
             case 'm': {
+#ifdef RLIMIT_RSS
                 what = RLIMIT_RSS;
+#else
+                what = RLIMIT_UNKNOWN;
+#endif
                 break;
             }
-#endif
             case 'n': {
                 what = RLIMIT_NOFILE;
+                break;
+            }
+            case 'q': {
+#ifdef RLIMIT_MSGQUEUE
+                what = RLIMIT_MSGQUEUE;
+#else
+                what = RLIMIT_UNKNOWN;
+#endif
+                break;
+            }
+            case 'r': {
+#ifdef RLIMIT_RTPRIO
+                what = RLIMIT_RTPRIO;
+#else
+                what = RLIMIT_UNKNOWN;
+#endif
                 break;
             }
             case 's': {
@@ -228,18 +316,62 @@ maybe_t<int> builtin_ulimit(parser_t &parser, io_streams_t &streams, const wchar
                 what = RLIMIT_CPU;
                 break;
             }
-#ifdef RLIMIT_NPROC
             case 'u': {
+#ifdef RLIMIT_NPROC
                 what = RLIMIT_NPROC;
+#else
+                what = RLIMIT_UNKNOWN;
+#endif
                 break;
             }
-#endif
-#ifdef RLIMIT_AS
             case 'v': {
+#ifdef RLIMIT_AS
                 what = RLIMIT_AS;
+#else
+                what = RLIMIT_UNKNOWN;
+#endif
                 break;
             }
+            case 'w': {
+#ifdef RLIMIT_SWAP
+                what = RLIMIT_SWAP;
+#else
+                what = RLIMIT_UNKNOWN;
 #endif
+                break;
+            }
+            case 'y': {
+#ifdef RLIMIT_RTTIME
+                what = RLIMIT_RTTIME;
+#else
+                what = RLIMIT_UNKNOWN;
+#endif
+                break;
+            }
+            case 'K': {
+#ifdef RLIMIT_KQUEUES
+                what = RLIMIT_KQUEUES;
+#else
+                what = RLIMIT_UNKNOWN;
+#endif
+                break;
+            }
+            case 'P': {
+#ifdef RLIMIT_NPTS
+                what = RLIMIT_NPTS;
+#else
+                what = RLIMIT_UNKNOWN;
+#endif
+                break;
+            }
+            case 'T': {
+#ifdef RLIMIT_NTHR
+                what = RLIMIT_NTHR;
+#else
+                what = RLIMIT_UNKNOWN;
+#endif
+                break;
+            }
             case 'h': {
                 builtin_print_help(parser, streams, cmd);
                 return STATUS_CMD_OK;
@@ -261,6 +393,13 @@ maybe_t<int> builtin_ulimit(parser_t &parser, io_streams_t &streams, const wchar
     if (report_all) {
         print_all(hard, streams);
         return STATUS_CMD_OK;
+    }
+
+    if (what == RLIMIT_UNKNOWN) {
+        streams.err.append_format(
+            _(L"%ls: Resource limit not available on this operating system\n"), cmd);
+        builtin_print_error_trailer(parser, streams.err, cmd);
+        return STATUS_INVALID_ARGS;
     }
 
     int arg_count = argc - w.woptind;

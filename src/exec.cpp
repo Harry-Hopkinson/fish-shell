@@ -222,14 +222,10 @@ static bool can_use_posix_spawn_for_job(const std::shared_ptr<job_t> &job,
     for (const auto &action : dup2s.get_actions()) {
         if (action.src == action.target) return false;
     }
-    if (job->wants_job_control()) {  //!OCLINT(collapsible if statements)
-        // We are going to use job control; therefore when we launch this job it will get its own
-        // process group ID. But will it be foregrounded?
-        if (job->group->should_claim_terminal()) {
-            // It will be foregrounded, so we will call tcsetpgrp(), therefore do not use
-            // posix_spawn.
-            return false;
-        }
+    if (job->group->wants_terminal()) {
+        // This job will be foregrounded, so we will call tcsetpgrp(), therefore do not use
+        // posix_spawn.
+        return false;
     }
     return true;
 }
@@ -244,7 +240,8 @@ static void internal_exec(env_stack_t &vars, job_t *j, const io_chain_t &block_i
 
     // child_setup_process makes sure signals are properly set up.
     dup2_list_t redirs = dup2_list_t::resolve_chain(all_ios);
-    if (child_setup_process(INVALID_PID, INVALID_PID, *j, false, redirs) == 0) {
+    if (child_setup_process(false /* not claim_tty */, *j, false /* not is_forked */, redirs) ==
+        0) {
         // Decrement SHLVL as we're removing ourselves from the shell "stack".
         if (is_interactive_session()) {
             auto shlvl_var = vars.get(L"SHLVL", ENV_GLOBAL | ENV_EXPORT);
@@ -261,16 +258,6 @@ static void internal_exec(env_stack_t &vars, job_t *j, const io_chain_t &block_i
         // launch_process _never_ returns.
         launch_process_nofork(vars, p);
     }
-}
-
-/// If our pgroup assignment mode wants us to use the first external proc, then apply it here.
-/// \returns the job's pgid, which should always be set to something valid after this call.
-static pid_t maybe_assign_pgid_from_child(const std::shared_ptr<job_t> &j, pid_t child_pid) {
-    auto &jt = j->group;
-    if (jt->needs_pgid_assignment()) {
-        jt->set_pgid(child_pid);
-    }
-    return *jt->get_pgid();
 }
 
 /// Construct an internal process for the process p. In the background, write the data \p outdata to
@@ -411,47 +398,38 @@ bool blocked_signals_for_job(const job_t &job, sigset_t *sigmask) {
 static launch_result_t fork_child_for_process(const std::shared_ptr<job_t> &job, process_t *p,
                                               const dup2_list_t &dup2s, const char *fork_type,
                                               const std::function<void()> &child_action) {
-    assert(!job->group->is_internal() && "Internal groups should never need to fork");
-    // Decide if we want to job to control the tty.
-    // If so we need to get our pgroup; if not we don't need the pgroup.
-    bool claim_tty = job->group->should_claim_terminal();
-    pid_t fish_pgrp = claim_tty ? getpgrp() : INVALID_PID;
+    // Claim the tty from fish, if the job wants it and we are the pgroup leader.
+    pid_t claim_tty_from =
+        (p->leads_pgrp && job->group->wants_terminal()) ? getpgrp() : INVALID_PID;
 
     pid_t pid = execute_fork();
-    if (pid == 0) {
-        // This is the child process. Setup redirections, print correct output to
-        // stdout and stderr, and then exit.
-        p->pid = getpid();
-        pid_t pgid = maybe_assign_pgid_from_child(job, p->pid);
+    if (pid < 0) {
+        return launch_result_t::failed;
+    }
+    const bool is_parent = (pid > 0);
 
-        // The child attempts to join the pgroup.
-        if (int err = execute_setpgid(p->pid, pgid, false /* not parent */)) {
-            report_setpgid_error(err, false /* is_parent */, pgid, job.get(), p);
+    // Record the pgroup if this is the leader.
+    // Both parent and child attempt to send the process to its new group, to resolve the race.
+    p->pid = is_parent ? pid : getpid();
+    if (p->leads_pgrp) {
+        job->group->set_pgid(p->pid);
+    }
+    if (auto pgid = job->group->get_pgid()) {
+        if (int err = execute_setpgid(p->pid, *pgid, is_parent)) {
+            report_setpgid_error(err, is_parent, *pgid, job.get(), p);
         }
-        child_setup_process(claim_tty ? pgid : INVALID_PID, fish_pgrp, *job, true, dup2s);
+    }
+
+    if (!is_parent) {
+        // Child process.
+        child_setup_process(claim_tty_from, *job, true, dup2s);
         child_action();
         DIE("Child process returned control to fork_child lambda!");
     }
 
-    if (pid < 0) {
-        return launch_result_t::failed;
-    }
-
-    // This is the parent process. Store away information on the child, and
-    // possibly give it control over the terminal.
     s_fork_count++;
     FLOGF(exec_fork, L"Fork #%d, pid %d: %s for '%ls'", int(s_fork_count), pid, fork_type,
           p->argv0());
-
-    p->pid = pid;
-    pid_t pgid = maybe_assign_pgid_from_child(job, p->pid);
-
-    // The parent attempts to send the child to its pgroup.
-    // EACCESS is an expected benign error as the child may have called exec().
-    if (int err = execute_setpgid(p->pid, pgid, true /* is parent */)) {
-        if (err != EACCES) report_setpgid_error(err, true /* is_parent */, pgid, job.get(), p);
-    }
-    terminal_maybe_give_to_job_group(job->group.get(), false);
     return launch_result_t::ok;
 }
 
@@ -534,11 +512,8 @@ static launch_result_t exec_external_command(parser_t &parser, const std::shared
     // Convert our IO chain to a dup2 sequence.
     auto dup2s = dup2_list_t::resolve_chain(proc_io_chain);
 
-    // Ensure that stdin is blocking before we hand it off (see issue #176). It's a
-    // little strange that we only do this with stdin and not with stdout or stderr.
-    // However in practice, setting or clearing O_NONBLOCK on stdin also sets it for the
-    // other two fds, presumably because they refer to the same underlying file
-    // (/dev/tty?).
+    // Ensure that stdin is blocking before we hand it off (see issue #176).
+    // Note this will also affect stdout and stderr if they refer to the same tty.
     make_fd_blocking(STDIN_FILENO);
 
     auto export_arr = parser.vars().export_arr();
@@ -573,14 +548,14 @@ static launch_result_t exec_external_command(parser_t &parser, const std::shared
 
         // these are all things do_fork() takes care of normally (for forked processes):
         p->pid = *pid;
-        pid_t pgid = maybe_assign_pgid_from_child(j, p->pid);
-
-        // posix_spawn should in principle set the pgid before returning.
-        // In glibc, posix_spawn uses fork() and the pgid group is set on the child side;
-        // therefore the parent may not have seen it be set yet.
-        // Ensure it gets set. See #4715, also https://github.com/Microsoft/WSL/issues/2997.
-        execute_setpgid(p->pid, pgid, true /* is parent */);
-        terminal_maybe_give_to_job_group(j->group.get(), false);
+        if (p->leads_pgrp) {
+            j->group->set_pgid(p->pid);
+            // posix_spawn should in principle set the pgid before returning.
+            // In glibc, posix_spawn uses fork() and the pgid group is set on the child side;
+            // therefore the parent may not have seen it be set yet.
+            // Ensure it gets set. See #4715, also https://github.com/Microsoft/WSL/issues/2997.
+            execute_setpgid(p->pid, p->pid, true /* is parent */);
+        }
         return launch_result_t::ok;
     } else
 #endif
@@ -1045,6 +1020,9 @@ bool exec_job(parser_t &parser, const shared_ptr<job_t> &j, const io_chain_t &bl
     autoclose_pipes_t deferred_pipes;
     process_t *const deferred_process = get_deferred_process(j);
 
+    // We may want to transfer tty ownership to the pgroup leader.
+    tty_transfer_t transfer{};
+
     // This loop loops over every process_t in the job, starting it as appropriate. This turns out
     // to be rather complex, since a process_t can be one of many rather different things.
     //
@@ -1099,6 +1077,11 @@ bool exec_job(parser_t &parser, const shared_ptr<job_t> &j, const io_chain_t &bl
             break;
         }
         procs_launched += 1;
+
+        // Transfer tty?
+        if (p->leads_pgrp && j->group->wants_terminal()) {
+            transfer.to_job_group(j->group);
+        }
     }
     pipe_next_read.close();
 
@@ -1124,8 +1107,7 @@ bool exec_job(parser_t &parser, const shared_ptr<job_t> &j, const io_chain_t &bl
         }
     }
 
-    FLOGF(exec_job_exec, L"Executed job %d from command '%ls' with pgrp %d", j->job_id(),
-          j->command_wcstr(), j->get_pgid() ? *j->get_pgid() : -2);
+    FLOGF(exec_job_exec, L"Executed job %d from command '%ls'", j->job_id(), j->command_wcstr());
 
     j->mark_constructed();
 
@@ -1139,7 +1121,12 @@ bool exec_job(parser_t &parser, const shared_ptr<job_t> &j, const io_chain_t &bl
         }
     }
 
-    j->continue_job(parser, !j->is_initially_background());
+    if (!j->is_initially_background()) {
+        j->continue_job(parser);
+    }
+
+    if (j->is_stopped()) transfer.save_tty_modes();
+    transfer.reclaim();
     return true;
 }
 

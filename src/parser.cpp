@@ -341,7 +341,7 @@ static void append_block_description_to_stack_trace(const parser_t &parser, cons
         if (file) {
             append_format(trace, _(L"\tcalled on line %d of file %ls\n"), b.src_lineno,
                           user_presentable_path(file, parser.vars()).c_str());
-        } else if (is_within_fish_initialization()) {
+        } else if (parser.libdata().within_fish_init) {
             append_format(trace, _(L"\tcalled during startup\n"));
         }
     }
@@ -493,7 +493,7 @@ wcstring parser_t::current_line() {
         if (file) {
             append_format(prefix, _(L"%ls (line %d): "),
                           user_presentable_path(file, vars()).c_str(), lineno);
-        } else if (is_within_fish_initialization()) {
+        } else if (libdata().within_fish_init) {
             append_format(prefix, L"%ls (line %d): ", _(L"Startup"), lineno);
         } else {
             append_format(prefix, L"%ls (line %d): ", _(L"Standard input"), lineno);
@@ -539,13 +539,6 @@ void parser_t::job_promote(job_t *job) {
 const job_t *parser_t::job_with_id(job_id_t id) const {
     for (const auto &job : job_list) {
         if (id <= 0 || job->job_id() == id) return job.get();
-    }
-    return nullptr;
-}
-
-const job_t *parser_t::job_with_internal_id(internal_job_id_t id) const {
-    for (const auto &job : job_list) {
-        if (job->internal_job_id == id) return job.get();
     }
     return nullptr;
 }
@@ -631,10 +624,6 @@ eval_res_t parser_t::eval_node(const parsed_source_ref_t &ps, const T &node,
         }
     }
 
-    // If we are provided a cancellation group, use it; otherwise create one.
-    cancellation_group_ref_t cancel_group =
-        job_group ? job_group->cancel_group : cancellation_group_t::create();
-
     // A helper to detect if we got a signal.
     // This includes both signals sent to fish (user hit control-C while fish is foreground) and
     // signals from the job group (e.g. some external job terminated with SIGQUIT).
@@ -642,7 +631,7 @@ eval_res_t parser_t::eval_node(const parsed_source_ref_t &ps, const T &node,
         // Did fish itself get a signal?
         int sig = signal_check_cancel();
         // Has this job group been cancelled?
-        if (!sig) sig = cancel_group->get_cancel_signal();
+        if (!sig && job_group) sig = job_group->get_cancel_signal();
         return sig;
     };
 
@@ -665,8 +654,8 @@ eval_res_t parser_t::eval_node(const parsed_source_ref_t &ps, const T &node,
 
     // Create and set a new execution context.
     using exc_ctx_ref_t = std::unique_ptr<parse_execution_context_t>;
-    scoped_push<exc_ctx_ref_t> exc(&execution_context, make_unique<parse_execution_context_t>(
-                                                           ps, op_ctx, cancel_group, block_io));
+    scoped_push<exc_ctx_ref_t> exc(&execution_context,
+                                   make_unique<parse_execution_context_t>(ps, op_ctx, block_io));
 
     // Check the exec count so we know if anything got executed.
     const size_t prev_exec_count = libdata().exec_count;

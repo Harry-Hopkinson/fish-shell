@@ -160,6 +160,7 @@ div.body {
 
 div.body p {
     line-height: 2em;
+    text-align: left;
 }
 
 div.body h1, div.body h2, div.body h3, div.body h4, div.body h5, div.body h6 {
@@ -516,7 +517,7 @@ div.body .internal.reference:link {
     div.body a {
         color: #2092fa;
     }
-    
+
     /* Color based on the Name.Function (.nf) class from pygments.css. */
     .command { color: #008fd7 }
 
@@ -527,5 +528,9 @@ div.body .internal.reference:link {
 
     code {
         background-color: rgba(200, 200, 255, .1);
+    }
+
+    .warning code {
+        background-color: #604040;
     }
 }

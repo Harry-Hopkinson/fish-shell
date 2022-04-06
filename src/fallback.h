@@ -68,9 +68,11 @@ struct winsize {
 
 #if defined(TPARM_SOLARIS_KLUDGE)
 /// Solaris tparm has a set fixed of parameters in its curses implementation, work around this here.
-#define tparm tparm_solaris_kludge
+#define fish_tparm tparm_solaris_kludge
 char *tparm_solaris_kludge(char *str, long p1 = 0, long p2 = 0, long p3 = 0, long p4 = 0,
                            long p5 = 0, long p6 = 0, long p7 = 0, long p8 = 0, long p9 = 0);
+#else
+#define fish_tparm tparm
 #endif
 
 /// These functions are missing from Solaris 10, and only accessible from
@@ -105,20 +107,6 @@ int wcsncasecmp(const wchar_t *s1, const wchar_t *s2, size_t n);
 #else
 #define dirfd(d) (d->d_fd)
 #endif
-#endif
-
-#ifndef HAVE_WCSNDUP
-/// Fallback for wcsndup function. Returns a copy of \c in, truncated to a maximum length of \c c.
-wchar_t *wcsndup(const wchar_t *in, size_t c);
-#endif
-
-#ifndef HAVE_WCSLCPY
-/// Copy src to string dst of size siz.  At most siz-1 characters will be copied.  Always NUL
-/// terminates (unless siz == 0).  Returns std::wcslen(src); if retval >= siz, truncation occurred.
-///
-/// This is the OpenBSD strlcpy function, modified for wide characters, and renamed to reflect this
-/// change.
-size_t wcslcpy(wchar_t *dst, const wchar_t *src, size_t siz);
 #endif
 
 // autoconf may fail to detect gettext (645), so don't define a function call gettext or we'll get

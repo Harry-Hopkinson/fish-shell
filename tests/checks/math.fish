@@ -140,9 +140,9 @@ not math '(1 pi)'
 # CHECKERR: '(1 pi)'
 # CHECKERR:    ^
 not math '(1 pow 1,2)'
-# CHECKERR: math: Error: Too many arguments
+# CHECKERR: math: Error: Missing operator
 # CHECKERR: '(1 pow 1,2)'
-# CHECKERR:       ^
+# CHECKERR:    ^
 not math
 # CHECKERR: math: expected >= 1 arguments; got 0
 not math -s 12
@@ -261,3 +261,52 @@ math pow 2 x cos'(-pi)', 2
 math 'ncr(0/0, 1)'
 # CHECKERR: math: Error: Result is infinite
 # CHECKERR: 'ncr(0/0, 1)'
+
+# Variadic functions require at least one argument
+math min
+# CHECKERR: math: Error: Too few arguments
+# CHECKERR: 'min'
+# CHECKERR:    ^
+math min 2
+# CHECK: 2
+math min 2, 3, 4, 5, -10, 1
+# CHECK: -10
+
+# Parentheses are required to disambiguate function call nested in argument list,
+# except when the call is the last argument.
+math 'min 5, 4, 3, ncr 2, 1, 5'
+# CHECKERR: math: Error: Too many arguments
+# CHECKERR:      'min 5, 4, 3, ncr 2, 1, 5'
+# CHECKERR: {{^}}                        ^
+math 'min 5, 4, 3, ncr(2, 1), 5'
+# CHECK: 2
+math 'min 5, 4, 3, 5, ncr 2, 1'
+# CHECK: 2
+# Variadic function consumes all available arguments,
+# so it is always the last argument unless parenthesised.
+# max(1, 2, min(3, 4, 5))
+math 'max 1, 2, min 3, 4, 5'
+# CHECK: 3
+# max(1, 2, min(3, 4), 5)
+math 'max 1, 2, min(3, 4), 5'
+# CHECK: 5
+math 0_1
+# CHECK: 1
+math 0x0_A
+# CHECK: 10
+math 1_000 + 2_000
+# CHECK: 3000
+math 1_0_0_0
+# CHECK: 1000
+math 0_0.5_0 + 0_1.0_0
+# CHECK: 1.5
+math 2e0_0_2
+# CHECK: 200
+math -0_0.5_0_0E0_0_3
+# CHECK: -500
+math 20e-0_1
+# CHECK: 2
+math 0x0_2.0_0_0P0_2
+# CHECK: 8
+math -0x8p-0_3
+# CHECK: -1

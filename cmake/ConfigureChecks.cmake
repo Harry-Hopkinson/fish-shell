@@ -31,6 +31,13 @@ if (HAS_REDUNDANT_MOVE)
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wredundant-move")
 endif()
 
+# Disable static destructors if we can.
+check_cxx_compiler_flag("-fno-c++-static-destructors" DISABLE_STATIC_DESTRUCTORS)
+if (DISABLE_STATIC_DESTRUCTORS)
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fno-c++-static-destructors")
+endif()
+
+
 # Try using CMake's own logic to locate curses/ncurses
 find_package(Curses)
 if(NOT ${CURSES_FOUND})
@@ -89,7 +96,6 @@ check_struct_has_member("struct dirent" d_type dirent.h HAVE_STRUCT_DIRENT_D_TYP
 check_cxx_symbol_exists(dirfd "sys/types.h;dirent.h" HAVE_DIRFD)
 check_include_file_cxx(execinfo.h HAVE_EXECINFO_H)
 check_cxx_symbol_exists(flock sys/file.h HAVE_FLOCK)
-check_cxx_symbol_exists(getifaddrs ifaddrs.h HAVE_GETIFADDRS)
 check_cxx_symbol_exists(getpwent pwd.h HAVE_GETPWENT)
 check_cxx_symbol_exists(getrusage sys/resource.h HAVE_GETRUSAGE)
 check_cxx_symbol_exists(gettext libintl.h HAVE_GETTEXT)
@@ -128,9 +134,7 @@ check_cxx_symbol_exists(eventfd sys/eventfd.h HAVE_EVENTFD)
 check_cxx_symbol_exists(pipe2 unistd.h HAVE_PIPE2)
 check_cxx_symbol_exists(wcscasecmp wchar.h HAVE_WCSCASECMP)
 check_cxx_symbol_exists(wcsdup wchar.h HAVE_WCSDUP)
-check_cxx_symbol_exists(wcslcpy wchar.h HAVE_WCSLCPY)
 check_cxx_symbol_exists(wcsncasecmp wchar.h HAVE_WCSNCASECMP)
-check_cxx_symbol_exists(wcsndup wchar.h HAVE_WCSNDUP)
 
 # These are for compatibility with Solaris 10, which places the following
 # in the std namespace.
@@ -251,10 +255,13 @@ int main () {
 check_cxx_source_compiles("
 #include <atomic>
 #include <cstdint>
-std::atomic<uint64_t> x (0);
+std::atomic<uint8_t> n8 (0);
+std::atomic<uint64_t> n64 (0);
 int main() {
-uint64_t i = x.load(std::memory_order_relaxed);
-return std::atomic_is_lock_free(&x);
+uint8_t i = n8.load(std::memory_order_relaxed);
+uint64_t j = n64.load(std::memory_order_relaxed);
+return std::atomic_is_lock_free(&n8)
+     & std::atomic_is_lock_free(&n64);
 }"
 LIBATOMIC_NOT_NEEDED)
 IF (NOT LIBATOMIC_NOT_NEEDED)

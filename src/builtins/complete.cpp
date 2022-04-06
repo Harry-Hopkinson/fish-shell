@@ -168,7 +168,7 @@ maybe_t<int> builtin_complete(parser_t &parser, io_streams_t &streams, const wch
         {L"help", no_argument, nullptr, 'h'},
         {L"keep-order", no_argument, nullptr, 'k'},
         {L"escape", no_argument, nullptr, opt_escape},
-        {nullptr, 0, nullptr, 0}};
+        {}};
 
     int opt;
     wgetopter_t w;
@@ -322,7 +322,7 @@ maybe_t<int> builtin_complete(parser_t &parser, io_streams_t &streams, const wch
         }
     }
 
-    if (condition && std::wcslen(condition)) {
+    if (condition && *condition) {
         const wcstring condition_string = condition;
         parse_error_list_t errors;
         if (parse_util_detect_errors(condition_string, &errors)) {
@@ -336,7 +336,7 @@ maybe_t<int> builtin_complete(parser_t &parser, io_streams_t &streams, const wch
         }
     }
 
-    if (comp && std::wcslen(comp)) {
+    if (comp && *comp) {
         wcstring prefix;
         prefix.append(cmd);
         prefix.append(L": ");

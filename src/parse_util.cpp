@@ -39,6 +39,9 @@
 /// Error message for arguments to 'end'
 #define END_ARG_ERR_MSG _(L"'end' does not take arguments. Did you forget a ';'?")
 
+/// Error message when 'time' is in a pipeline.
+#define TIME_IN_PIPELINE_ERR_MSG _(L"The 'time' command may only be at the beginning of a pipeline")
+
 /// Maximum length of a variable name to show in error reports before truncation
 static constexpr int var_err_len = 16;
 
@@ -88,7 +91,8 @@ size_t parse_util_get_offset(const wcstring &str, int line, long line_offset) {
 }
 
 static int parse_util_locate_cmdsub(const wchar_t *in, const wchar_t **begin, const wchar_t **end,
-                                    bool allow_incomplete, bool *inout_is_quoted) {
+                                    bool allow_incomplete, bool *inout_is_quoted,
+                                    bool *out_has_dollar) {
     bool escaped = false;
     bool is_first = true;
     bool is_token_begin = true;
@@ -101,10 +105,12 @@ static int parse_util_locate_cmdsub(const wchar_t *in, const wchar_t **begin, co
     assert(in && "null parameter");
 
     const wchar_t *pos = in;
+    const wchar_t *last_dollar = nullptr;
     auto process_opening_quote = [&](wchar_t quote) -> bool /* ok */ {
         const wchar_t *q_end = quote_end(pos, quote);
         if (!q_end) return false;
         if (*q_end == L'$') {
+            last_dollar = q_end;
             quoted_cmdsubs.push_back(paran_count);
         }
         // We want to report whether the outermost comand substitution between
@@ -128,10 +134,15 @@ static int parse_util_locate_cmdsub(const wchar_t *in, const wchar_t **begin, co
                 escaped = true;
             } else if (*pos == L'#' && is_token_begin) {
                 pos = comment_end(pos) - 1;
+            } else if (*pos == L'$') {
+                last_dollar = pos;
             } else {
                 if (*pos == L'(') {
                     if ((paran_count == 0) && (paran_begin == nullptr)) {
                         paran_begin = pos;
+                        if (out_has_dollar) {
+                            *out_has_dollar = last_dollar == pos - 1;
+                        }
                     }
 
                     paran_count++;
@@ -148,7 +159,7 @@ static int parse_util_locate_cmdsub(const wchar_t *in, const wchar_t **begin, co
                         break;
                     }
 
-                    // Check if the ) did complete a quoted command substituion.
+                    // Check if the ) did complete a quoted command substitution.
                     if (!quoted_cmdsubs.empty() && quoted_cmdsubs.back() == paran_count) {
                         quoted_cmdsubs.pop_back();
                         // Quoted command substitutions temporarily close double quotes.
@@ -241,7 +252,8 @@ long parse_util_slice_length(const wchar_t *in) {
 
 int parse_util_locate_cmdsubst_range(const wcstring &str, size_t *inout_cursor_offset,
                                      wcstring *out_contents, size_t *out_start, size_t *out_end,
-                                     bool accept_incomplete, bool *inout_is_quoted) {
+                                     bool accept_incomplete, bool *inout_is_quoted,
+                                     bool *out_has_dollar) {
     // Clear the return values.
     if (out_contents != nullptr) out_contents->clear();
     *out_start = 0;
@@ -258,7 +270,7 @@ int parse_util_locate_cmdsubst_range(const wcstring &str, size_t *inout_cursor_o
     const wchar_t *bracket_range_end = nullptr;
 
     int ret = parse_util_locate_cmdsub(valid_range_start, &bracket_range_begin, &bracket_range_end,
-                                       accept_incomplete, inout_is_quoted);
+                                       accept_incomplete, inout_is_quoted, out_has_dollar);
     if (ret <= 0) {
         return ret;
     }
@@ -300,7 +312,7 @@ void parse_util_cmdsubst_extent(const wchar_t *buff, size_t cursor_pos, const wc
     const wchar_t *pos = buff;
     for (;;) {
         const wchar_t *begin = nullptr, *end = nullptr;
-        if (parse_util_locate_cmdsub(pos, &begin, &end, true, nullptr) <= 0) {
+        if (parse_util_locate_cmdsub(pos, &begin, &end, true, nullptr, nullptr) <= 0) {
             // No subshell found, all done.
             break;
         }
@@ -943,7 +955,46 @@ parser_test_error_bits_t parse_util_detect_errors_in_argument(const ast::argumen
     size_t source_start = source_range->start;
     parser_test_error_bits_t err = 0;
 
+    auto check_subtoken = [&arg_src, &out_errors, source_start](size_t begin, size_t end) -> int {
+        wcstring unesc;
+        if (!unescape_string(arg_src.c_str() + begin, end - begin, &unesc, UNESCAPE_SPECIAL)) {
+            if (out_errors) {
+                append_syntax_error(out_errors, source_start + begin, L"Invalid token '%ls'",
+                                    arg_src.c_str());
+            }
+            return 1;
+        }
+
+        parser_test_error_bits_t err = 0;
+        // Check for invalid variable expansions.
+        const size_t unesc_size = unesc.size();
+        for (size_t idx = 0; idx < unesc_size; idx++) {
+            if (unesc.at(idx) != VARIABLE_EXPAND && unesc.at(idx) != VARIABLE_EXPAND_SINGLE) {
+                continue;
+            }
+
+            wchar_t next_char = idx + 1 < unesc_size ? unesc.at(idx + 1) : L'\0';
+            if (next_char != VARIABLE_EXPAND && next_char != VARIABLE_EXPAND_SINGLE &&
+                next_char != '(' && !valid_var_name_char(next_char)) {
+                err = 1;
+                if (out_errors) {
+                    // We have something like $$$^....  Back up until we reach the first $.
+                    size_t first_dollar = idx;
+                    while (first_dollar > 0 &&
+                           (unesc.at(first_dollar - 1) == VARIABLE_EXPAND ||
+                            unesc.at(first_dollar - 1) == VARIABLE_EXPAND_SINGLE)) {
+                        first_dollar--;
+                    }
+                    parse_util_expand_variable_error(unesc, source_start, first_dollar, out_errors);
+                }
+            }
+        }
+
+        return err;
+    };
+
     size_t cursor = 0;
+    size_t checked = 0;
     wcstring subst;
 
     bool do_loop = true;
@@ -951,8 +1002,9 @@ parser_test_error_bits_t parse_util_detect_errors_in_argument(const ast::argumen
     while (do_loop) {
         size_t paren_begin = 0;
         size_t paren_end = 0;
+        bool has_dollar = false;
         switch (parse_util_locate_cmdsubst_range(arg_src, &cursor, &subst, &paren_begin, &paren_end,
-                                                 false, &is_quoted)) {
+                                                 false, &is_quoted, &has_dollar)) {
             case -1: {
                 err |= PARSER_TEST_ERROR;
                 if (out_errors) {
@@ -965,6 +1017,8 @@ parser_test_error_bits_t parse_util_detect_errors_in_argument(const ast::argumen
                 break;
             }
             case 1: {
+                err |= check_subtoken(checked, paren_begin - has_dollar);
+
                 assert(paren_begin < paren_end && "Parens out of order?");
                 parse_error_list_t subst_errors;
                 err |= parse_util_detect_errors(subst, &subst_errors);
@@ -978,6 +1032,8 @@ parser_test_error_bits_t parse_util_detect_errors_in_argument(const ast::argumen
                 if (out_errors != nullptr) {
                     out_errors->insert(out_errors->end(), subst_errors.begin(), subst_errors.end());
                 }
+
+                checked = paren_end + 1;
                 break;
             }
             default: {
@@ -985,37 +1041,7 @@ parser_test_error_bits_t parse_util_detect_errors_in_argument(const ast::argumen
             }
         }
     }
-
-    wcstring unesc;
-    if (!unescape_string(arg_src, &unesc, UNESCAPE_SPECIAL)) {
-        if (out_errors) {
-            append_syntax_error(out_errors, source_start, L"Invalid token '%ls'", arg_src.c_str());
-        }
-        return 1;
-    }
-
-    // Check for invalid variable expansions.
-    const size_t unesc_size = unesc.size();
-    for (size_t idx = 0; idx < unesc_size; idx++) {
-        if (unesc.at(idx) != VARIABLE_EXPAND && unesc.at(idx) != VARIABLE_EXPAND_SINGLE) {
-            continue;
-        }
-
-        wchar_t next_char = idx + 1 < unesc_size ? unesc.at(idx + 1) : L'\0';
-        if (next_char != VARIABLE_EXPAND && next_char != VARIABLE_EXPAND_SINGLE &&
-            next_char != '(' && !valid_var_name_char(next_char)) {
-            err = 1;
-            if (out_errors) {
-                // We have something like $$$^....  Back up until we reach the first $.
-                size_t first_dollar = idx;
-                while (first_dollar > 0 && (unesc.at(first_dollar - 1) == VARIABLE_EXPAND ||
-                                            unesc.at(first_dollar - 1) == VARIABLE_EXPAND_SINGLE)) {
-                    first_dollar--;
-                }
-                parse_util_expand_variable_error(unesc, source_start, first_dollar, out_errors);
-            }
-        }
-    }
+    err |= check_subtoken(checked, arg_src.size());
 
     return err;
 }
@@ -1108,7 +1134,8 @@ static bool detect_errors_in_decorated_statement(const wcstring &buff_src,
     // Check that we don't try to pipe through exec.
     bool is_in_pipeline = (pipe_pos != pipeline_position_t::none);
     if (is_in_pipeline && decoration == statement_decoration_t::exec) {
-        errored = append_syntax_error(parse_errors, source_start, EXEC_ERR_MSG, L"exec");
+        errored =
+            append_syntax_error(parse_errors, source_start, INVALID_PIPELINE_CMD_ERR_MSG, L"exec");
     }
 
     // This is a somewhat stale check that 'and' and 'or' are not in pipelines, except at the
@@ -1119,8 +1146,13 @@ static bool detect_errors_in_decorated_statement(const wcstring &buff_src,
         // commands.
         const wcstring &command = dst.command.source(buff_src, storage);
         if (command == L"and" || command == L"or") {
-            errored =
-                append_syntax_error(parse_errors, source_start, EXEC_ERR_MSG, command.c_str());
+            errored = append_syntax_error(parse_errors, source_start, INVALID_PIPELINE_CMD_ERR_MSG,
+                                          command.c_str());
+        }
+
+        // Similarly for time (#8841).
+        if (command == L"time") {
+            errored = append_syntax_error(parse_errors, source_start, TIME_IN_PIPELINE_ERR_MSG);
         }
     }
 
@@ -1148,8 +1180,8 @@ static bool detect_errors_in_decorated_statement(const wcstring &buff_src,
 
         // Check that pipes are sound.
         if (!errored && parser_is_pipe_forbidden(command) && is_in_pipeline) {
-            errored =
-                append_syntax_error(parse_errors, source_start, EXEC_ERR_MSG, command.c_str());
+            errored = append_syntax_error(parse_errors, source_start, INVALID_PIPELINE_CMD_ERR_MSG,
+                                          command.c_str());
         }
 
         // Check that we don't break or continue from outside a loop.

@@ -4,16 +4,14 @@
 # This function is called by the __fish_on_interactive function, which is defined in config.fish.
 #
 function __fish_config_interactive -d "Initializations that should be performed when entering interactive mode"
-    if test $__fish_initialized -lt 3000
-        # Perform transitions relevant to going from fish 2.x to 3.x.
-
-        # Migrate old universal abbreviations to the new scheme.
-        __fish_abbr_old | source
-    end
-
     # Make sure this function is only run once.
     if set -q __fish_config_interactive_done
         return
+    end
+
+    # For one-off upgrades of the fish version
+    if not set -q __fish_initialized
+        set -U __fish_initialized 0
     end
 
     set -g __fish_config_interactive_done
@@ -255,10 +253,11 @@ function __fish_config_interactive -d "Initializations that should be performed 
     end
 
     # Notify terminals when $PWD changes (issue #906).
-    # VTE based terminals, Terminal.app, iTerm.app (TODO), and foot support this.
+    # VTE based terminals, Terminal.app, iTerm.app (TODO), foot, and kitty support this.
     if not set -q FISH_UNIT_TESTS_RUNNING
         and begin
             string match -q -- 'foot*' $TERM
+            or string match -q -- 'xterm-kitty*' $TERM
             or test 0"$VTE_VERSION" -ge 3405
             or test "$TERM_PROGRAM" = Apple_Terminal && test (string match -r '\d+' 0"$TERM_PROGRAM_VERSION") -ge 309
             or test "$TERM_PROGRAM" = WezTerm

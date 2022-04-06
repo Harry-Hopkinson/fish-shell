@@ -1,9 +1,92 @@
-fish 3.4.0 (released ???)
-=========================
+fish 3.5.0 (not yet released)
+====================================
 
-..
-   Ignore for 3.4.0 changelog: 1363 2876 3625 3954 6477 7357 7602 8008 8059 8077 8079 8084 8096 8118 8127 8128 8130 8137 8139 8146 8151 8153 8161 8170 8176 8183 8184 8191 8192 8195 8202 8204 8205 8206 8219 8221 8222 8224 8227 8228 8229 8230 8231 8235 8236 8237 8238 8239 8241 8243 8249 8252 8253 8256 8257 8260 8268 8270 8271 8277 8280 8285 8287 8289 8295 8299 8305 8306 8308 8310 8311 8314 8321 8323 8326 8327 8334 8335 8337 8338 8344 8353 8358 8365 8367 8368 8380 8381 8385 8391 8394 8403 8406 8409 8410 8419 8429 8430 8433 8438 8439 8441 8444 8446 8449 8456 8457 8471 8472 8476 8477 8478 8479 8480 8487 8492 8495 8497 8500 8511 8518 8521 8522 8526 8527 8528 8548 8549 8559 8575 8584 8587 8588 8570 8591 8596 8597 8601 8608 8612 8613 8614 8615 8621 8623 8625 8626 8630 8633 8636 8639 8643 8645 8647 8650 8651 8652 8653 8654 8655 8656 8658 8660 8661 8662 8665 8667 8672 8675 8676 8686 8700 8710 8729 8731
+Notable improvements and fixes
+------------------------------
 
+Deprecations and removed features
+---------------------------------
+- Most ``string`` subcommands no longer append a newline to their input if the input didn't have one (:issue:`8473`, :issue:`3847`)
+- Fish's escape sequence removal (like for ``string length --visible`` or to figure out how wide the prompt is) no longer has special support for non-standard color sequences like from Data General terminals, e.g. the Data General Dasher D220 from 1984. This removes a bunch of work in the common case, allowing ``string length --visible`` to be much faster with unknown escape sequences. We don't expect anyone to have ever used fish with such a terminal (:issue:`8769`).
+- Code to upgrade universal variables from fish before 3.0 has been removed. Users who upgrade directly from fishes before then will have to set their universal variables (including abbreviations) again. (:issue:`8781`)
+- The meaning of an empty color variable has changed. Previously, when a variable was empty it would be interpreted as the "normal" color. Now fish will ignore empty color variables and go to the fallback color. For example::
+
+    set -g fish_color_command blue
+    set -g fish_color_keyword # before this would make keywords "normal" (usually white in a dark terminal), now it'll make them blue
+
+  This makes it easier to make self-contained colorschemes that don't accidentally use color that was set before.
+  ``fish_config`` has been adjusted to set known color variables that a theme doesn't explicitly set to empty. (:issue:`8793`)
+  
+Scripting improvements
+----------------------
+- Quoted command substitution that directly follow a variable expansion (like ``echo "$var$(echo x)"``) no longer affect the variable expansion (:issue:`8849`).
+- Fish now correctly expands command substitutions that are preceded by an escaped dollar (like ``echo \$(echo)``). This regressed in version 3.4.0.
+- ``math`` can now handle underscores (``_``) as visual separators in numbers (:issue:`8611`, :issue:`8496`)::
+
+    math 5 + 2_123_252
+
+- ``math``'s ``min`` and ``max`` functions now take a variable number of arguments instead of always requiring 2 (:issue:`8644`, :issue:`8646`)    .
+- ``read`` is now faster as the last process in a pipeline (:issue:`8552`).
+- ``string join`` gained a new ``--no-empty`` flag to skip empty arguments (:issue:`8774`, :issue:`8351`).
+- ``read`` now actually only triggers the ``fish_read`` event, not the ``fish_prompt`` event (:issue:`8797`). It was supposed to work this way since fish 3.2.0.
+- The tty modes are no longer restored when non-interactive shells exit. This fixes wrong tty modes in pipelines with interactive commands. (:issue:`8705`).
+
+Interactive improvements
+------------------------
+- The default command-not-found handler now reports a special error if there is a non-executable file (:issue:`8804`)
+- ``less`` and other interactive commands would occasionally be stopped when run in a pipeline with fish functions; this has been fixed (:issue:`8699`).
+- Case-changing autosuggestions generated mid-token now correctly append only the suffix, instead of duplicating the token (:issue:`8820`).
+- ``ulimit`` learned a number of new options for the resource limits available on Linux, FreeBSD and NetBSD, and returns a specific warning if the limit specified is not available on the active operating system (:issue:`8823`).
+- The ``vared`` command can now successfully edit variables named "tmp" or "prompt" (:issue:`8836`).
+- ``time`` now emits an error if used after the first command in a pipeline (:issue:`8841`).
+
+New or improved bindings
+^^^^^^^^^^^^^^^^^^^^^^^^
+- The nextd-or-forward-word and prevd-or-backward-word bindings move like forward/backward-word again instead of forward/backward-bigword.
+
+Improved prompts
+^^^^^^^^^^^^^^^^
+- A new ``Astronaut`` prompt (:issue:`8775`)
+
+
+Completions
+^^^^^^^^^^^
+- Added completions for:
+  - brightnessctl (:issue:`8758`)
+  - rclone (:issue:`8819`)
+  - tuned-adm (:issue:`8760`)
+
+
+Improved terminal support
+^^^^^^^^^^^^^^^^^^^^^^^^^
+- CWD-reporting is now turned on for kitty as well (:issue:`8806`)
+
+Other improvements
+------------------
+
+For distributors
+----------------
+- libatomic is now correctly detected as necessary when building on RISC-V (:issue:`8850`).
+
+--------------
+
+fish 3.4.1 (released March 25, 2022)
+====================================
+
+This release of fish fixes the following problems identified in fish 3.4.0:
+
+- An error printed after upgrading, where old instances could pick up a newer version of the ``fish_title`` function, has been fixed (:issue:`8778`)
+- fish builds correctly on NetBSD (:issue:`8788`) and OpenIndiana (:issue:`8780`).
+- ``nextd-or-forward-word``, bound to :kbd:`Alt-Right Arrow` by default, was inadvertently changed to move like ``forward-bigword``. This has been corrected (:issue:`8790`).
+- ``funcsave -q`` and ``funcsave --quiet`` now work correctly (:issue:`8830`).
+- Issues with the ``csharp`` and ``nmcli`` completions were corrected.
+
+If you are upgrading from version 3.3.1 or before, please also review the release notes for 3.4.0 (included below).
+
+--------------
+
+fish 3.4.0 (released March 12, 2022)
+====================================
 
 Notable improvements and fixes
 ------------------------------
@@ -21,7 +104,7 @@ Notable improvements and fixes
     # this will still split on newlines only.
 
 - Complementing the ``prompt`` command in 3.3.0, ``fish_config`` gained a ``theme`` subcommand to show and pick from the sample themes (meaning color schemes) directly in the terminal, instead of having to open a Web browser. For example ``fish_config theme choose Nord`` loads the Nord theme in the current session (:issue:`8132`). The current theme can be saved with ``fish_config theme dump``, and custom themes can be added by saving them in ``~/.config/fish/themes/``.
-- ``set`` and ``read`` learned a new option ``--function`` to set a variable in the function's top scope. This should be a more familiar way of scoping variables and avoids issues with ``--local``, which is actually block-scoped (:issue:`565`, :issue:`8145`)::
+- ``set`` and ``read`` learned a new option, ``--function``, to set a variable in the function's top scope. This should be a more familiar way of scoping variables and avoids issues with ``--local``, which is actually block-scoped (:issue:`565`, :issue:`8145`)::
 
     function demonstration
         if true
@@ -39,6 +122,7 @@ Notable improvements and fixes
 
 - Performance improvements to globbing, especially on systems using glibc. In some cases (large directories with files with many numbers in the names) this almost halves the time taken to expand the glob.
 - Autosuggestions can now be turned off by setting ``$fish_autosuggestion_enabled`` to 0, and (almost) all highlighting can be turned off by choosing the new "None" theme. The exception is necessary colors, like those which distinguish autosuggestions from the actual command line. (:issue:`8376`)
+- The ``fish_git_prompt`` function, which is included in the default prompts, now overrides ``git`` to avoid running  commands set by per-repository configuration. This avoids a potential security issue in some circumstances, and has been assigned CVE-2022-20001 (:issue:`8589`).
 
 Deprecations and removed features
 ---------------------------------
@@ -157,12 +241,14 @@ Completions
   - ``exif`` (:issue:`8246`)
   - ``findstr`` (:issue:`8481`)
   - ``git-sizer`` (:issue:`8156`)
+  - ``gnome-extensions`` (:issue:`8732`)
   - ``gping`` (:issue:`8181`)
   - ``isatty`` (:issue:`8609`)
   - ``istioctl`` (:issue:`8343`)
   - ``kmutil``
+  - ``kubectl`` (:issue:`8734`)
   - ``matlab`` (:issue:`8505`)
-  - ``mono`` (:issue:`8415`, :issue:`8452`) and related tools ``csharp``, ``gacutil``, ``gendarme``, ``ikdasm``, ``ilasm``, ``mkbundle``, ``monodis``, ``monop``, ``sqlsharp`` and ``xsp``.
+  - ``mono`` (:issue:`8415`) and related tools ``csharp``, ``gacutil``, ``gendarme``, ``ikdasm``, ``ilasm``, ``mkbundle``, ``monodis``, ``monop``, ``sqlsharp`` and ``xsp`` (:issue:`8452`)
   -  Angular's ``ng`` (:issue:`8111`)
   - ``nodeenv`` (:issue:`8533`)
   - ``octave`` (:issue:`8505`)
@@ -181,10 +267,7 @@ Completions
 
 - Improvements to many completions, especially for ``git`` aliases (:issue:`8129`), subcommands (:issue:`8134`) and submodules (:issue:`8716`).
 - Many adjustments to complete correct options for system utilities on BSD and macOS.
-- Unified the OpenZFS-related completions across operating systems and improved the vdev-related completions for all platforms.
-- Add missing completions for the ``-p`` option of ``xbps-query``.
 - When evaluating custom completions, the command line state no longer includes variable overrides (``var=val``). This unbreaks completions that read ``commandline -op``.
-- Replace completions for helm version 2 with helm 3-compatible completions (:issue:`8724`).
 
 Improved terminal support
 ^^^^^^^^^^^^^^^^^^^^^^^^^
